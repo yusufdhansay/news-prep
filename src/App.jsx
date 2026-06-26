@@ -492,6 +492,21 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Mobile Header (visible only on mobile via CSS) */}
+      <div className="mobile-header">
+        <div className="logo-section" style={{ marginBottom: 0, paddingLeft: 0 }}>
+          <div className="logo-icon">
+            <Newspaper size={24} />
+          </div>
+          <div>
+            <h1 className="logo-title" style={{ fontSize: '1.15rem' }}>MFin Prep</h1>
+          </div>
+        </div>
+        <div className="connection-pill">
+          <span className={`dot ${apiConnected ? 'connected' : 'disconnected'}`}></span>
+        </div>
+      </div>
+
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="logo-section">
@@ -603,7 +618,7 @@ export default function App() {
             </div>
 
             {/* Split Grid: Details on Left (60%/100%), Chat on Right (40%) */}
-            <div style={{ display: 'grid', gridTemplateColumns: askAiOpen ? '1.5fr 1fr' : '1fr', gap: '2.5rem', alignItems: 'start' }}>
+            <div className={`detail-split-grid ${askAiOpen ? 'has-chat' : ''}`}>
               
               {/* Left Column: implications & questions */}
               <div className="detail-panel" style={{ padding: '2.5rem', background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', borderRadius: 'var(--border-radius)', position: 'static' }}>
@@ -680,7 +695,20 @@ export default function App() {
 
               {/* Right Column: Chat widget */}
               {askAiOpen && (
-                <div className="chat-container" style={{ height: '65vh', position: 'sticky', top: '2.5rem' }}>
+                <div className="chat-container">
+                  <div className="chat-container-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: '1px solid var(--glass-border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <MessageSquare size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <span style={{ fontSize: '0.95rem' }}>Ask AI Assistant</span>
+                    </div>
+                    <button 
+                      onClick={() => setAskAiOpen(false)}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                      title="Close Chat"
+                    >
+                      <span style={{ fontSize: '1.25rem', fontWeight: 'bold', lineHeight: 1 }}>&times;</span>
+                    </button>
+                  </div>
                   <div className="chat-messages" style={{ padding: '1.25rem' }}>
                     <div className="message-wrapper panelist">
                       <div className="message-header">AI Assistant</div>
@@ -968,6 +996,42 @@ export default function App() {
         )}
 
       </main>
+
+      {/* Mobile Bottom Navigation Bar (visible only on mobile via CSS) */}
+      <nav className="mobile-nav">
+        <div 
+          className={`mobile-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('dashboard'); setSelectedArticle(null); window.history.pushState(null, '', '/'); }}
+          id="mobile-nav-dashboard"
+        >
+          <BookOpen size={20} />
+          <span>Feed</span>
+        </div>
+        <div 
+          className={`mobile-nav-item ${activeTab === 'briefing' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('briefing'); setSelectedArticle(null); window.history.pushState(null, '', '/'); }}
+          id="mobile-nav-briefing"
+        >
+          <FileText size={20} />
+          <span>Briefing</span>
+        </div>
+        <div 
+          className={`mobile-nav-item ${activeTab === 'bookmarks' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('bookmarks'); setSelectedArticle(null); window.history.pushState(null, '', '/'); }}
+          id="mobile-nav-bookmarks"
+        >
+          <Bookmark size={20} />
+          <span>Revision</span>
+        </div>
+        <div 
+          className={`mobile-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+          onClick={() => { setActiveTab('settings'); setSelectedArticle(null); window.history.pushState(null, '', '/'); }}
+          id="mobile-nav-settings"
+        >
+          <Settings size={20} />
+          <span>Settings</span>
+        </div>
+      </nav>
     </div>
   );
 }

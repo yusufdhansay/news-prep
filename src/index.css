@@ -756,6 +756,8 @@ body {
   flex-direction: column;
   height: 65vh;
   box-shadow: var(--shadow-premium);
+  position: sticky;
+  top: 2.5rem;
 }
 
 .chat-messages {
@@ -1033,4 +1035,211 @@ body {
   color: var(--accent-primary);
   display: flex;
   align-items: center;
+}
+
+/* --- Vercel Vibe split grid --- */
+.detail-split-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2.5rem;
+  align-items: start;
+}
+.detail-split-grid.has-chat {
+  grid-template-columns: 1.5fr 1fr;
+}
+
+/* Mobile top & bottom bars hidden on desktop */
+.mobile-header,
+.mobile-nav {
+  display: none;
+}
+
+/* --- Mobile Responsiveness --- */
+@media (max-width: 1024px) {
+  .sidebar {
+    display: none !important;
+  }
+  
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    padding: 5.5rem 1rem 6rem 1rem !important;
+  }
+  
+  /* Mobile Header Top Bar */
+  .mobile-header {
+    display: flex !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3.5rem;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--glass-border);
+    padding: 0 1.25rem;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 1000;
+  }
+  
+  /* Mobile Bottom Navigation Bar */
+  .mobile-nav {
+    display: flex !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4.5rem;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--glass-border);
+    justify-content: space-around;
+    align-items: center;
+    z-index: 1000;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  
+  .mobile-nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    width: 22%;
+    height: 100%;
+    opacity: 0.75;
+  }
+  
+  .mobile-nav-item:hover {
+    color: var(--text-primary);
+  }
+  
+  .mobile-nav-item.active {
+    color: var(--accent-primary);
+    opacity: 1;
+    border-top: 2px solid var(--accent-primary);
+    margin-top: -2px; /* Offset the border-top width */
+  }
+  
+  /* Category Tabs Horizontal Scroll */
+  .category-tabs {
+    display: flex !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    padding-bottom: 8px !important;
+    gap: 0.5rem !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+  }
+  
+  .category-tabs::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+  
+  .tab-chip {
+    flex-shrink: 0;
+  }
+  
+  /* Layout Structures */
+  .screen-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 1.25rem !important;
+    margin-bottom: 1.75rem !important;
+  }
+  
+  .header-actions {
+    width: 100% !important;
+    justify-content: space-between !important;
+    gap: 0.75rem !important;
+  }
+  
+  .header-actions .date-picker-container {
+    flex-grow: 1;
+  }
+  
+  .header-actions button {
+    flex-grow: 1;
+    justify-content: center;
+  }
+  
+  .feed-controls {
+    flex-direction: column !important;
+    gap: 1rem !important;
+    align-items: stretch !important;
+  }
+  
+  .search-box {
+    width: 100% !important;
+  }
+  
+  /* Stats Cards Grid */
+  .stats-banner {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.75rem !important;
+    margin-bottom: 1.75rem !important;
+  }
+  
+  .stat-card {
+    padding: 1rem !important;
+    gap: 0.75rem !important;
+    border-radius: 12px !important;
+  }
+  
+  /* Split details & chatbot layout */
+  .detail-split-grid.has-chat {
+    grid-template-columns: 1fr !important;
+    gap: 1.5rem !important;
+  }
+  
+  .detail-panel {
+    padding: 1.5rem !important;
+  }
+  
+  .detail-header h1 {
+    font-size: 1.6rem !important;
+  }
+  
+  /* Slide-up chatbot drawer overlay on mobile */
+  .chat-container {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: 70vh !important;
+    z-index: 1100 !important;
+    border-radius: 24px 24px 0 0 !important;
+    background: var(--bg-secondary) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-bottom: none !important;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.6) !important;
+    animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  }
+  
+  .settings-container {
+    padding: 1.5rem !important;
+    max-width: 100% !important;
+  }
+  
+  /* Page title paddings */
+  .screen-header h1 {
+    font-size: 1.8rem !important;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
