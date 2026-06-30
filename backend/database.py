@@ -239,10 +239,18 @@ def init_db():
     """)
     
     # Migrate to add full_text column if it doesn't exist
-    try:
-        cursor.execute("ALTER TABLE articles ADD COLUMN full_text TEXT")
-    except Exception:
-        pass
+    if IS_POSTGRES:
+        cursor.execute("""
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name='articles' AND column_name='full_text'
+        """)
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE articles ADD COLUMN full_text TEXT")
+    else:
+        cursor.execute("PRAGMA table_info(articles)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'full_text' not in columns:
+            cursor.execute("ALTER TABLE articles ADD COLUMN full_text TEXT")
         
     conn.commit()
     conn.close()
