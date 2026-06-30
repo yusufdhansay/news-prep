@@ -235,19 +235,35 @@ async def get_news(
 async def refresh_news(date: Optional[str] = None, user_id: int = Depends(get_current_user_id)):
     """
     Fetches latest RSS feeds and updates the local SQLite cache.
+    Uses a distributed lock to prevent thundering herd scraping.
     """
+    target_date = date or datetime.now().strftime("%Y-%m-%d")
+    
+    # 1. Acquire distributed lock
+    lock_acquired = database.acquire_refresh_lock(target_date)
+    if not lock_acquired:
+        # If lock is already held, skip refresh and return success status
+        return {
+            "success": True, 
+            "new_articles_count": 0, 
+            "status": "refresh_in_progress"
+        }
+        
     try:
-        articles = news_fetcher.refresh_all_news(date_str=date)
+        articles = news_fetcher.refresh_all_news(date_str=target_date)
         if not articles:
+            database.release_refresh_lock(target_date)
             return {"success": True, "new_articles_count": 0}
             
         new_count = database.save_articles(articles)
+        database.release_refresh_lock(target_date)
         return {
             "success": True,
             "new_articles_count": new_count,
             "total_fetched": len(articles)
         }
     except Exception as e:
+        database.release_refresh_lock(target_date)
         raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
 
 @app.post("/api/news/{article_id}/analyze")

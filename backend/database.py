@@ -7,9 +7,12 @@ from datetime import datetime
 DB_URL = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
 IS_POSTGRES = DB_URL is not None
 
+_CONN_POOL = None
+
 if IS_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
     import urllib.parse
     
     if DB_URL.startswith("postgres://"):
@@ -142,9 +145,10 @@ class DynamicCursor:
 
 
 class DynamicConnection:
-    def __init__(self, conn, is_postgres=False):
+    def __init__(self, conn, is_postgres=False, pool=None):
         self.conn = conn
         self.is_postgres = is_postgres
+        self.pool = pool
 
     def cursor(self):
         if self.is_postgres:
@@ -157,21 +161,31 @@ class DynamicConnection:
         self.conn.commit()
 
     def close(self):
-        self.conn.close()
+        if self.is_postgres and self.pool:
+            self.pool.putconn(self.conn)
+        else:
+            self.conn.close()
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
-            self.conn.rollback()
-        self.conn.close()
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+        self.close()
 
 
 def get_db_connection():
+    global _CONN_POOL
     if IS_POSTGRES:
-        conn = psycopg2.connect(DB_URL)
-        return DynamicConnection(conn, is_postgres=True)
+        if _CONN_POOL is None:
+            # Min 1 connection, max 12 connections
+            _CONN_POOL = psycopg2.pool.ThreadedConnectionPool(1, 12, DB_URL)
+        conn = _CONN_POOL.getconn()
+        return DynamicConnection(conn, is_postgres=True, pool=_CONN_POOL)
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -234,6 +248,14 @@ def init_db():
             date TEXT PRIMARY KEY,
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Create refresh_locks table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS refresh_locks (
+            date TEXT PRIMARY KEY,
+            locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -666,6 +688,48 @@ def save_cached_briefing(date_str, content):
         conn.commit()
     except Exception as e:
         print(f"Error caching daily briefing: {e}")
+    conn.close()
+
+def acquire_refresh_lock(date_str):
+    """
+    Tries to acquire a lock for refreshing news for a specific date.
+    Returns True if acquired successfully, False if already locked.
+    Locks older than 2 minutes are automatically cleared/overwritten.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. Clean up stale locks (older than 2 minutes)
+    if IS_POSTGRES:
+        cursor.execute("DELETE FROM refresh_locks WHERE locked_at < NOW() - INTERVAL '2 minutes'")
+    else:
+        # SQLite uses datetime()
+        cursor.execute("DELETE FROM refresh_locks WHERE datetime(locked_at) < datetime('now', '-2 minutes')")
+    
+    # 2. Check if a valid lock exists
+    cursor.execute("SELECT 1 FROM refresh_locks WHERE date = ?", (date_str,))
+    if cursor.fetchone():
+        conn.close()
+        return False
+        
+    # 3. Try to acquire the lock
+    try:
+        cursor.execute("INSERT INTO refresh_locks (date) VALUES (?)", (date_str,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        conn.close()
+        return False
+
+def release_refresh_lock(date_str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM refresh_locks WHERE date = ?", (date_str,))
+        conn.commit()
+    except Exception as e:
+        print(f"Error releasing refresh lock: {e}")
     conn.close()
 
 # Initialize on import to make sure db file is ready
