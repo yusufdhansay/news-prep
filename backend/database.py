@@ -88,6 +88,8 @@ class DynamicCursor:
                     query += ' ON CONFLICT (link) DO NOTHING'
                 elif 'user_bookmarks' in query or 'user_read_status' in query:
                     query += ' ON CONFLICT (user_id, article_id) DO NOTHING'
+                elif 'daily_briefings' in query:
+                    query += ' ON CONFLICT (date) DO NOTHING'
             
             # 3. Translate schema creation variables
             if 'INTEGER PRIMARY KEY AUTOINCREMENT' in query:
@@ -223,6 +225,15 @@ def init_db():
             user_id INTEGER NOT NULL,
             article_id INTEGER NOT NULL,
             PRIMARY KEY (user_id, article_id)
+        )
+    """)
+    
+    # Create daily_briefings table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS daily_briefings (
+            date TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
@@ -632,6 +643,30 @@ def create_user(email, hashed_password):
     except Exception as e:
         conn.close()
         raise e
+
+def get_cached_briefing(date_str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT content FROM daily_briefings WHERE date = ?", (date_str,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def save_cached_briefing(date_str, content):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO daily_briefings (date, content)
+            VALUES (?, ?)
+            """,
+            (date_str, content)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Error caching daily briefing: {e}")
+    conn.close()
 
 # Initialize on import to make sure db file is ready
 init_db()

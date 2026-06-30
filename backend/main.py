@@ -374,20 +374,14 @@ async def chat_about_article(article_id: int, request: ChatRequest, user_id: int
 @app.get("/api/daily-briefing")
 async def get_daily_briefing(user_id: int = Depends(get_current_user_id)):
     """
-    Returns today's cohesive daily digest. Caches locally in a markdown file.
+    Returns today's cohesive daily digest. Caches persistently in the database.
     """
     today_str = datetime.now().strftime("%Y-%m-%d")
-    briefing_filename = f"briefing_{today_str}.md"
-    if os.environ.get("VERCEL") == "1":
-        briefing_path = os.path.join("/tmp", briefing_filename)
-    else:
-        briefing_path = os.path.join(os.path.dirname(__file__), briefing_filename)
     
-    # Check if cached file exists
-    if os.path.exists(briefing_path):
-        with open(briefing_path, "r") as f:
-            content = f.read()
-        return {"date": today_str, "content": content}
+    # Check if cached briefing exists in database
+    cached_content = database.get_cached_briefing(today_str)
+    if cached_content:
+        return {"date": today_str, "content": cached_content}
         
     # Otherwise fetch latest headlines to build it
     articles = database.get_articles(user_id=user_id, limit=15)
@@ -405,12 +399,8 @@ async def get_daily_briefing(user_id: int = Depends(get_current_user_id)):
         
     briefing_content = llm_analyzer.generate_daily_briefing(articles)
     
-    # Save cache
-    try:
-        with open(briefing_path, "w") as f:
-            f.write(briefing_content)
-    except Exception as e:
-        print(f"Warning: Could not cache briefing file: {e}")
+    # Save cache persistently to the database
+    database.save_cached_briefing(today_str, briefing_content)
         
     return {"date": today_str, "content": briefing_content}
 
