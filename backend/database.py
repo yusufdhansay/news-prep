@@ -3,26 +3,162 @@ import os
 import json
 from datetime import datetime
 
-if os.environ.get("VERCEL") == "1":
-    # Serverless environment: Copy bundled database to /tmp/ if not already present
-    VERCEL_DB_PATH = "/tmp/mfin_news.db"
-    BUNDLED_DB_PATH = os.path.join(os.path.dirname(__file__), "mfin_news.db")
-    if not os.path.exists(VERCEL_DB_PATH):
-        import shutil
-        print(f"Copying database from {BUNDLED_DB_PATH} to {VERCEL_DB_PATH}")
-        try:
-            shutil.copy2(BUNDLED_DB_PATH, VERCEL_DB_PATH)
-        except Exception as e:
-            print(f"Error copying database to /tmp: {e}")
-    DB_PATH = VERCEL_DB_PATH
+# Check if we should connect to Postgres
+DB_URL = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
+IS_POSTGRES = DB_URL is not None
+
+if IS_POSTGRES:
+    import psycopg2
+    import psycopg2.extras
+    if DB_URL.startswith("postgres://"):
+        DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
 else:
-    DB_PATH = os.path.join(os.path.dirname(__file__), "mfin_news.db")
+    if os.environ.get("VERCEL") == "1":
+        # Serverless environment: Copy bundled database to /tmp/ if not already present
+        VERCEL_DB_PATH = "/tmp/mfin_news.db"
+        BUNDLED_DB_PATH = os.path.join(os.path.dirname(__file__), "mfin_news.db")
+        if not os.path.exists(VERCEL_DB_PATH):
+            import shutil
+            print(f"Copying database from {BUNDLED_DB_PATH} to {VERCEL_DB_PATH}")
+            try:
+                shutil.copy2(BUNDLED_DB_PATH, VERCEL_DB_PATH)
+            except Exception as e:
+                print(f"Error copying database to /tmp: {e}")
+        DB_PATH = VERCEL_DB_PATH
+    else:
+        DB_PATH = os.path.join(os.path.dirname(__file__), "mfin_news.db")
+
+
+class DynamicRow:
+    def __init__(self, data):
+        self.data = dict(data)
+        self.keys_list = list(self.data.keys())
+        self.values_list = list(self.data.values())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self.values_list[key]
+        return self.data[key]
+
+    def keys(self):
+        return self.keys_list
+
+    def values(self):
+        return self.values_list
+
+    def __iter__(self):
+        return iter(self.data.items())
+
+    def __repr__(self):
+        return repr(self.data)
+
+
+class DynamicCursor:
+    def __init__(self, cursor, is_postgres=False):
+        self.cursor = cursor
+        self.is_postgres = is_postgres
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        if params is None:
+            params = ()
+            
+        if self.is_postgres:
+            # 1. Translate placeholders
+            query = query.replace('?', '%s')
+            
+            # 2. Translate SQLite INSERT OR IGNORE to PostgreSQL ON CONFLICT DO NOTHING
+            if 'INSERT OR IGNORE INTO' in query:
+                query = query.replace('INSERT OR IGNORE INTO', 'INSERT INTO')
+                if 'articles' in query:
+                    query += ' ON CONFLICT (link) DO NOTHING'
+            
+            # 3. Translate schema creation variables
+            if 'INTEGER PRIMARY KEY AUTOINCREMENT' in query:
+                query = query.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY')
+                
+            # 4. Translate date functions
+            if "date(pub_date) = date(%s)" in query:
+                query = query.replace("date(pub_date) = date(%s)", "pub_date::date = %s::date")
+            elif "date(pub_date)" in query:
+                query = query.replace("date(pub_date)", "pub_date::date")
+            elif "date('now', '-7 days')" in query:
+                query = query.replace("date('now', '-7 days')", "(CURRENT_DATE - INTERVAL '7 days')::date")
+            elif "date('now')" in query:
+                query = query.replace("date('now')", "CURRENT_DATE")
+
+            # 5. Handle lastrowid emulation
+            is_insert = query.strip().upper().startswith('INSERT')
+            if is_insert and 'RETURNING' not in query.upper():
+                query += ' RETURNING id'
+                self.cursor.execute(query, params)
+                try:
+                    row = self.cursor.fetchone()
+                    if row:
+                        self._lastrowid = row[0]
+                except Exception:
+                    pass
+                return
+            
+        self.cursor.execute(query, params)
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return DynamicRow(row)
+
+    def fetchall(self):
+        rows = self.cursor.fetchall()
+        return [DynamicRow(r) for r in rows]
+
+    @property
+    def lastrowid(self):
+        if self.is_postgres:
+            return self._lastrowid
+        else:
+            return self.cursor.lastrowid
+
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+
+class DynamicConnection:
+    def __init__(self, conn, is_postgres=False):
+        self.conn = conn
+        self.is_postgres = is_postgres
+
+    def cursor(self):
+        if self.is_postgres:
+            cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        else:
+            cursor = self.conn.cursor()
+        return DynamicCursor(cursor, is_postgres=self.is_postgres)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.conn.rollback()
+        self.conn.close()
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if IS_POSTGRES:
+        conn = psycopg2.connect(DB_URL)
+        return DynamicConnection(conn, is_postgres=True)
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return DynamicConnection(conn, is_postgres=False)
+
 
 def init_db():
     conn = get_db_connection()
@@ -51,8 +187,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS quiz_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
-            qa_details TEXT NOT NULL, -- JSON string representing chat logs and evaluations
-            score INTEGER,            -- Overall evaluation score (0-100)
+            qa_details TEXT NOT NULL,
+            score INTEGER,
             completed INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -61,7 +197,7 @@ def init_db():
     # Migrate to add full_text column if it doesn't exist
     try:
         cursor.execute("ALTER TABLE articles ADD COLUMN full_text TEXT")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
         
     conn.commit()
