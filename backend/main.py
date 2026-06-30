@@ -1,6 +1,7 @@
 import os
-from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from datetime import datetime, timedelta
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -53,6 +54,106 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[ChatMessage] = []
+
+class UserRegister(BaseModel):
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+JWT_SECRET = os.environ.get("JWT_SECRET", "super-secret-mfin-key-change-in-prod")
+JWT_ALGORITHM = "HS256"
+security = HTTPBearer()
+
+def hash_password(password: str) -> str:
+    import bcrypt
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    import bcrypt
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception:
+        return False
+
+def create_access_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(days=30)
+    payload = {
+        "sub": str(user_id),
+        "exp": expire
+    }
+    import jwt
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
+    import jwt
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = int(payload.get("sub"))
+        return user_id
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token or expired session.")
+
+@app.post("/api/auth/register")
+async def register_user(payload: UserRegister):
+    email = payload.email.strip().lower()
+    password = payload.password
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required.")
+    
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+        
+    # Check if user already exists
+    existing = database.get_user_by_email(email)
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email already exists.")
+        
+    hashed = hash_password(password)
+    try:
+        user_id = database.create_user(email, hashed)
+        token = create_access_token(user_id)
+        return {
+            "token": token,
+            "user": {"id": user_id, "email": email}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+@app.post("/api/auth/login")
+async def login_user(payload: UserLogin):
+    email = payload.email.strip().lower()
+    password = payload.password
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required.")
+        
+    user = database.get_user_by_email(email)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid email or password.")
+        
+    if not verify_password(password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Invalid email or password.")
+        
+    token = create_access_token(user["id"])
+    return {
+        "token": token,
+        "user": {"id": user["id"], "email": user["email"]}
+    }
+
+@app.get("/api/auth/me")
+async def get_me(user_id: int = Depends(get_current_user_id)):
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return dict(row)
 
 @app.get("/api/health")
 async def health_check():
@@ -114,12 +215,14 @@ async def get_news(
     bookmarked: Optional[int] = None,
     search: Optional[str] = None,
     date: Optional[str] = None,
-    limit: Optional[int] = 50
+    limit: Optional[int] = 50,
+    user_id: int = Depends(get_current_user_id)
 ):
     """
     Retrieves filtered list of news articles.
     """
     return database.get_articles(
+        user_id=user_id,
         category=category,
         read_status=read_status,
         bookmarked=bookmarked,
@@ -129,7 +232,7 @@ async def get_news(
     )
 
 @app.post("/api/news/refresh")
-async def refresh_news(date: Optional[str] = None):
+async def refresh_news(date: Optional[str] = None, user_id: int = Depends(get_current_user_id)):
     """
     Fetches latest RSS feeds and updates the local SQLite cache.
     """
@@ -148,15 +251,15 @@ async def refresh_news(date: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
 
 @app.post("/api/news/{article_id}/analyze")
-async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] = None):
+async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] = None, user_id: int = Depends(get_current_user_id)):
     """
     Runs HTML scraping and Groq analysis on a specific news item.
     """
-    article = database.get_article(article_id)
+    article = database.get_article(article_id, user_id=user_id)
     
     # Fallback to payload search/ingestion if not found in local DB by ID (stateless container workaround)
     if not article and payload:
-        article = database.get_article_by_link(payload.link)
+        article = database.get_article_by_link(payload.link, user_id=user_id)
         if not article:
             database.save_articles([{
                 "title": payload.title,
@@ -165,7 +268,7 @@ async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] =
                 "category": payload.category,
                 "pub_date": payload.pub_date
             }])
-            article = database.get_article_by_link(payload.link)
+            article = database.get_article_by_link(payload.link, user_id=user_id)
         if article:
             article_id = article["id"]
 
@@ -185,7 +288,7 @@ async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] =
     # Check if already analyzed
     if article.get("summary") and article.get("financial_implications") and article.get("pi_questions"):
         # Make sure we return the article with the newly scraped full_text
-        updated = database.get_article(article_id)
+        updated = database.get_article(article_id, user_id=user_id)
         return updated
         
     # Otherwise run LLM analysis
@@ -208,37 +311,37 @@ async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] =
     )
     
     # Return updated article
-    return database.get_article(article_id)
+    return database.get_article(article_id, user_id=user_id)
 
 @app.post("/api/news/{article_id}/read")
-async def toggle_read_status(article_id: int, request: ReadRequest):
+async def toggle_read_status(article_id: int, request: ReadRequest, user_id: int = Depends(get_current_user_id)):
     """
     Marks article as read or unread.
     """
-    article = database.get_article(article_id)
+    article = database.get_article(article_id, user_id=user_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
         
-    database.mark_as_read(article_id, request.read_status)
+    database.mark_as_read(user_id, article_id, request.read_status)
     return {"success": True}
 
 @app.post("/api/news/{article_id}/bookmark")
-async def toggle_bookmark_status(article_id: int):
+async def toggle_bookmark_status(article_id: int, user_id: int = Depends(get_current_user_id)):
     """
     Toggles bookmark status of the article.
     """
-    new_state = database.toggle_bookmark(article_id)
+    new_state = database.toggle_bookmark(user_id, article_id)
     if new_state is None:
         raise HTTPException(status_code=404, detail="Article not found")
     return {"success": True, "bookmarked": bool(new_state)}
 
 @app.post("/api/news/{article_id}/chat")
-async def chat_about_article(article_id: int, request: ChatRequest):
+async def chat_about_article(article_id: int, request: ChatRequest, user_id: int = Depends(get_current_user_id)):
     """
     Accepts user follow-up questions about a specific article and answers them
     using Groq LLM with context of the news item.
     """
-    article = database.get_article(article_id)
+    article = database.get_article(article_id, user_id=user_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
         
@@ -269,7 +372,7 @@ async def chat_about_article(article_id: int, request: ChatRequest):
     return {"response": result["content"]}
 
 @app.get("/api/daily-briefing")
-async def get_daily_briefing():
+async def get_daily_briefing(user_id: int = Depends(get_current_user_id)):
     """
     Returns today's cohesive daily digest. Caches locally in a markdown file.
     """
@@ -287,13 +390,13 @@ async def get_daily_briefing():
         return {"date": today_str, "content": content}
         
     # Otherwise fetch latest headlines to build it
-    articles = database.get_articles(limit=15)
+    articles = database.get_articles(user_id=user_id, limit=15)
     if not articles:
         # Refresh first
         try:
             refreshed = news_fetcher.refresh_all_news()
             database.save_articles(refreshed)
-            articles = database.get_articles(limit=15)
+            articles = database.get_articles(user_id=user_id, limit=15)
         except Exception:
             pass
             
@@ -402,11 +505,11 @@ async def get_quiz_history():
     return database.get_quiz_sessions(completed=1)
 
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats_endpoint(user_id: int = Depends(get_current_user_id)):
     """
     Retrieves candidate progress stats.
     """
-    return database.get_stats()
+    return database.get_stats(user_id=user_id)
 
 if __name__ == "__main__":
     import uvicorn

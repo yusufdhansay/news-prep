@@ -101,6 +101,83 @@ export default function App() {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
 
+  // Authentication states
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authError, setAuthError] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  const saveSession = (newToken, newUser) => {
+    localStorage.setItem('token', newToken);
+    localStorage.setItem('user', JSON.stringify(newUser));
+    setToken(newToken);
+    setUser(newUser);
+  };
+  
+  const clearSession = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken('');
+    setUser(null);
+  };
+
+  const apiFetch = async (url, options = {}) => {
+    const headers = options.headers || {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const res = await window.fetch(url, {
+      ...options,
+      headers
+    });
+    if (res.status === 401) {
+      clearSession();
+    }
+    return res;
+  };
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    if (!authEmail || !authPassword) {
+      setAuthError('Please fill in all fields.');
+      return;
+    }
+    setAuthError('');
+    setIsAuthenticating(true);
+    
+    try {
+      const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const res = await window.fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: authEmail, password: authPassword })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        saveSession(data.token, data.user);
+        setAuthEmail('');
+        setAuthPassword('');
+      } else {
+        setAuthError(data.detail || 'Authentication failed. Please try again.');
+      }
+    } catch (err) {
+      setAuthError('Could not connect to server. Please try again later.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   // Ask AI Chat states
   const [askAiOpen, setAskAiOpen] = useState(false);
   const [articleChatInput, setArticleChatInput] = useState('');
@@ -112,10 +189,12 @@ export default function App() {
   // Fetch initial setup and health info
   useEffect(() => {
     checkHealth();
-    fetchStats();
-    fetchNews();
-    fetchQuizHistory();
-  }, []);
+    if (token) {
+      fetchStats();
+      fetchNews();
+      fetchQuizHistory();
+    }
+  }, [token]);
 
   // Popstate back button listening
   useEffect(() => {
@@ -148,7 +227,7 @@ export default function App() {
         category: art.category,
         pub_date: art.pub_date
       }) : null;
-      const res = await fetch(`/api/news/${articleId}/analyze`, { 
+      const res = await apiFetch(`/api/news/${articleId}/analyze`, { 
         method: 'POST',
         headers: body ? { 'Content-Type': 'application/json' } : {},
         body: body
@@ -172,7 +251,7 @@ export default function App() {
 
   const checkHealth = async () => {
     try {
-      const res = await fetch('/api/health');
+      const res = await apiFetch('/api/health');
       if (res.ok) {
         const data = await res.json();
         setApiConnected(data.status === 'healthy');
@@ -187,7 +266,7 @@ export default function App() {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch('/api/stats');
+      const res = await apiFetch('/api/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -223,7 +302,7 @@ export default function App() {
 
     try {
       const url = `/api/news?category=${encodeURIComponent(selectedCategory)}&search=${encodeURIComponent(searchQuery)}&date=${selectedDate}`;
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
         setNews(data);
@@ -232,17 +311,17 @@ export default function App() {
         if (selectedDate && !isRefreshing && !isAutoRefreshing) {
           // Check if there are any articles at all for this date
           const checkUrl = `/api/news?category=all&date=${encodeURIComponent(selectedDate)}`;
-          const checkRes = await fetch(checkUrl);
+          const checkRes = await apiFetch(checkUrl);
           if (checkRes.ok) {
             const checkData = await checkRes.json();
             if (checkData.length === 0) {
               setIsAutoRefreshing(true);
               try {
                 const refreshUrl = `/api/news/refresh?date=${encodeURIComponent(selectedDate)}`;
-                const refreshRes = await fetch(refreshUrl, { method: 'POST' });
+                const refreshRes = await apiFetch(refreshUrl, { method: 'POST' });
                 if (refreshRes.ok) {
                   // Re-fetch news with current filters
-                  const reRes = await fetch(url);
+                  const reRes = await apiFetch(url);
                   if (reRes.ok) {
                     const reData = await reRes.json();
                     setNews(reData);
@@ -271,14 +350,16 @@ export default function App() {
 
   // Re-run news fetch on filter/search/date change
   useEffect(() => {
-    fetchNews();
-  }, [selectedCategory, searchQuery, selectedDate]);
+    if (token) {
+      fetchNews();
+    }
+  }, [selectedCategory, searchQuery, selectedDate, token]);
 
   const handleRefreshNews = async () => {
     setIsRefreshing(true);
     try {
       const url = `/api/news/refresh?date=${encodeURIComponent(selectedDate)}`;
-      const res = await fetch(url, { method: 'POST' });
+      const res = await apiFetch(url, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         fetchNews();
@@ -304,7 +385,7 @@ export default function App() {
     // Mark as read instantly if it wasn't read
     if (article.read_status === 0) {
       try {
-        await fetch(`/api/news/${article.id}/read`, {
+        await apiFetch(`/api/news/${article.id}/read`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ read_status: true })
@@ -328,7 +409,7 @@ export default function App() {
           category: article.category,
           pub_date: article.pub_date
         });
-        const res = await fetch(`/api/news/${article.id}/analyze`, { 
+        const res = await apiFetch(`/api/news/${article.id}/analyze`, { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: body
@@ -352,7 +433,7 @@ export default function App() {
   const handleToggleBookmark = async (e, article) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`/api/news/${article.id}/bookmark`, { method: 'POST' });
+      const res = await apiFetch(`/api/news/${article.id}/bookmark`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setNews(prev => prev.map(n => n.id === article.id ? { ...n, bookmarked: data.bookmarked ? 1 : 0 } : n));
@@ -369,7 +450,7 @@ export default function App() {
   const handleFetchBriefing = async () => {
     setIsLoadingBriefing(true);
     try {
-      const res = await fetch('/api/daily-briefing');
+      const res = await apiFetch('/api/daily-briefing');
       if (res.ok) {
         const data = await res.json();
         setBriefing(data.content);
@@ -382,15 +463,15 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'briefing' && !briefing) {
+    if (activeTab === 'briefing' && !briefing && token) {
       handleFetchBriefing();
     }
-  }, [activeTab]);
+  }, [activeTab, token]);
 
   // Mock Interview operations
   const fetchQuizHistory = async () => {
     try {
-      const res = await fetch('/api/quiz/history');
+      const res = await apiFetch('/api/quiz/history');
       if (res.ok) {
         const data = await res.json();
         setQuizHistory(data);
@@ -407,7 +488,7 @@ export default function App() {
     setIsSubmittingAnswer(true);
     
     try {
-      const res = await fetch('/api/quiz/start', { method: 'POST' });
+      const res = await apiFetch('/api/quiz/start', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setCurrentSessionId(data.session_id);
@@ -435,7 +516,7 @@ export default function App() {
     setIsSubmittingAnswer(true);
 
     try {
-      const res = await fetch(`/api/quiz/${currentSessionId}/respond`, {
+      const res = await apiFetch(`/api/quiz/${currentSessionId}/respond`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ answer: userMsg })
@@ -462,7 +543,7 @@ export default function App() {
     if (!apiKeyInput.trim()) return;
 
     try {
-      const res = await fetch('/api/settings/key', {
+      const res = await apiFetch('/api/settings/key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ api_key: apiKeyInput.trim() })
@@ -490,7 +571,7 @@ export default function App() {
     setIsSubmittingArticleChat(true);
 
     try {
-      const res = await fetch(`/api/news/${selectedArticle.id}/chat`, {
+      const res = await apiFetch(`/api/news/${selectedArticle.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -511,6 +592,73 @@ export default function App() {
       setIsSubmittingArticleChat(false);
     }
   };
+
+  if (!token) {
+    return (
+      <div className="auth-container">
+        <div className="auth-card">
+          <div className="auth-header">
+            <div className="auth-logo">
+              <Newspaper size={48} style={{ color: 'var(--accent-primary)' }} />
+            </div>
+            <h1 className="auth-title">MFin Prep</h1>
+            <p className="auth-subtitle">JBIMS PI Current Affairs Portal</p>
+          </div>
+
+          <div className="auth-tabs">
+            <button 
+              className={`auth-tab-btn ${authMode === 'login' ? 'active' : ''}`}
+              onClick={() => { setAuthMode('login'); setAuthError(''); }}
+            >
+              Sign In
+            </button>
+            <button 
+              className={`auth-tab-btn ${authMode === 'register' ? 'active' : ''}`}
+              onClick={() => { setAuthMode('register'); setAuthError(''); }}
+            >
+              Create Account
+            </button>
+          </div>
+
+          <form className="auth-form" onSubmit={handleAuthSubmit}>
+            <div className="auth-field">
+              <label className="auth-label">Email Address</label>
+              <input 
+                type="email" 
+                className="auth-input" 
+                placeholder="you@domain.com"
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="auth-field">
+              <label className="auth-label">Password</label>
+              <input 
+                type="password" 
+                className="auth-input" 
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            {authError && (
+              <div className="auth-error-msg">
+                {authError}
+              </div>
+            )}
+
+            <button type="submit" className="auth-btn-primary" disabled={isAuthenticating}>
+              {isAuthenticating ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
@@ -588,6 +736,30 @@ export default function App() {
                 <span>Configure Groq Key</span>
               </div>
             )}
+            <button 
+              onClick={clearSession} 
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--glass-border)',
+                color: 'var(--text-secondary)',
+                width: '100%',
+                marginTop: '1.25rem',
+                padding: '0.5rem 0.75rem',
+                borderRadius: 'var(--border-radius-sm)',
+                fontSize: '0.8rem',
+                fontWeight: '500',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                transition: 'var(--transition-smooth)'
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(244, 63, 94, 0.4)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+            >
+              Sign Out
+            </button>
           </div>
         </nav>
       </aside>

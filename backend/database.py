@@ -86,6 +86,8 @@ class DynamicCursor:
                 query = query.replace('INSERT OR IGNORE INTO', 'INSERT INTO')
                 if 'articles' in query:
                     query += ' ON CONFLICT (link) DO NOTHING'
+                elif 'user_bookmarks' in query or 'user_read_status' in query:
+                    query += ' ON CONFLICT (user_id, article_id) DO NOTHING'
             
             # 3. Translate schema creation variables
             if 'INTEGER PRIMARY KEY AUTOINCREMENT' in query:
@@ -196,6 +198,34 @@ def init_db():
         )
     """)
     
+    # Create users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Create user_bookmarks table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_bookmarks (
+            user_id INTEGER NOT NULL,
+            article_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, article_id)
+        )
+    """)
+    
+    # Create user_read_status table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_read_status (
+            user_id INTEGER NOT NULL,
+            article_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, article_id)
+        )
+    """)
+    
     # Create quiz sessions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS quiz_sessions (
@@ -251,23 +281,31 @@ def save_articles(articles):
     conn.close()
     return inserted_count
 
-def get_articles(category=None, read_status=None, bookmarked=None, search_query=None, date_filter=None, limit=50):
+def get_articles(user_id=None, category=None, read_status=None, bookmarked=None, search_query=None, date_filter=None, limit=50):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    query = "SELECT * FROM articles WHERE 1=1"
-    params = []
+    query = """
+        SELECT a.*,
+               CASE WHEN b.article_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked,
+               CASE WHEN r.article_id IS NOT NULL THEN 1 ELSE 0 END as read_status
+        FROM articles a
+        LEFT JOIN user_bookmarks b ON a.id = b.article_id AND b.user_id = ?
+        LEFT JOIN user_read_status r ON a.id = r.article_id AND r.user_id = ?
+        WHERE 1=1
+    """
+    params = [user_id or 0, user_id or 0]
     
     if category and category.lower() != "all":
         query += " AND category = ?"
         params.append(category)
         
     if read_status is not None:
-        query += " AND read_status = ?"
+        query += " AND (CASE WHEN r.article_id IS NOT NULL THEN 1 ELSE 0 END) = ?"
         params.append(int(read_status))
         
     if bookmarked is not None:
-        query += " AND bookmarked = ?"
+        query += " AND (CASE WHEN b.article_id IS NOT NULL THEN 1 ELSE 0 END) = ?"
         params.append(int(bookmarked))
         
     if date_filter:
@@ -306,11 +344,20 @@ def get_articles(category=None, read_status=None, bookmarked=None, search_query=
     conn.close()
     return articles
 
-def get_article(article_id):
+def get_article(article_id, user_id=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM articles WHERE id = ?", (article_id,))
+    query = """
+        SELECT a.*,
+               CASE WHEN b.article_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked,
+               CASE WHEN r.article_id IS NOT NULL THEN 1 ELSE 0 END as read_status
+        FROM articles a
+        LEFT JOIN user_bookmarks b ON a.id = b.article_id AND b.user_id = ?
+        LEFT JOIN user_read_status r ON a.id = r.article_id AND r.user_id = ?
+        WHERE a.id = ?
+    """
+    cursor.execute(query, (user_id or 0, user_id or 0, article_id))
     row = cursor.fetchone()
     
     if not row:
@@ -360,28 +407,56 @@ def update_article_full_text(article_id, full_text):
     conn.commit()
     conn.close()
 
-def mark_as_read(article_id, read_status):
+def mark_as_read(user_id, article_id, read_status):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("UPDATE articles SET read_status = ? WHERE id = ?", (int(read_status), article_id))
+    if read_status:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user_read_status (user_id, article_id)
+            VALUES (?, ?)
+            """,
+            (user_id, article_id)
+        )
+    else:
+        cursor.execute(
+            """
+            DELETE FROM user_read_status
+            WHERE user_id = ? AND article_id = ?
+            """,
+            (user_id, article_id)
+        )
     
     conn.commit()
     conn.close()
 
-def toggle_bookmark(article_id):
+def toggle_bookmark(user_id, article_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     
     # Get current bookmarked state
-    cursor.execute("SELECT bookmarked FROM articles WHERE id = ?", (article_id,))
+    cursor.execute(
+        "SELECT 1 FROM user_bookmarks WHERE user_id = ? AND article_id = ?",
+        (user_id, article_id)
+    )
     row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return None
-        
-    new_state = 1 if row["bookmarked"] == 0 else 0
-    cursor.execute("UPDATE articles SET bookmarked = ? WHERE id = ?", (new_state, article_id))
+    
+    if row:
+        cursor.execute(
+            "DELETE FROM user_bookmarks WHERE user_id = ? AND article_id = ?",
+            (user_id, article_id)
+        )
+        new_state = 0
+    else:
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user_bookmarks (user_id, article_id)
+            VALUES (?, ?)
+            """,
+            (user_id, article_id)
+        )
+        new_state = 1
     
     conn.commit()
     conn.close()
@@ -452,36 +527,32 @@ def get_quiz_sessions(completed=None):
     conn.close()
     return sessions
 
-def get_stats():
+def get_stats(user_id=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Articles read total
-    cursor.execute("SELECT COUNT(*) FROM articles WHERE read_status = 1")
+    uid = user_id or 0
+    
+    # Articles read total for this user
+    cursor.execute("SELECT COUNT(*) FROM user_read_status WHERE user_id = ?", (uid,))
     read_count = cursor.fetchone()[0]
     
     # Total articles
     cursor.execute("SELECT COUNT(*) FROM articles")
     total_count = cursor.fetchone()[0]
     
-    # Bookmarks count
-    cursor.execute("SELECT COUNT(*) FROM articles WHERE bookmarked = 1")
+    # Bookmarks count for this user
+    cursor.execute("SELECT COUNT(*) FROM user_bookmarks WHERE user_id = ?", (uid,))
     bookmark_count = cursor.fetchone()[0]
     
-    # Quiz stats
-    cursor.execute("SELECT COUNT(*), AVG(score) FROM quiz_sessions WHERE completed = 1")
-    row = cursor.fetchone()
-    quiz_count = row[0]
-    avg_score = round(row[1], 1) if row[1] is not None else 0
-    
-    # Calculate streak (mock/simple logic or actual date logic)
-    # For simplicity, let's count distinct days with read articles in the last 7 days
+    # Calculate streak (distinct days with read articles in the last 7 days for this user)
     cursor.execute("""
         SELECT COUNT(DISTINCT date(pub_date)) 
-        FROM articles 
-        WHERE read_status = 1 
+        FROM articles a
+        JOIN user_read_status r ON a.id = r.article_id
+        WHERE r.user_id = ?
           AND pub_date >= date('now', '-7 days')
-    """)
+    """, (uid,))
     streak = cursor.fetchone()[0]
     
     conn.close()
@@ -489,15 +560,24 @@ def get_stats():
         "read_count": read_count,
         "total_count": total_count,
         "bookmark_count": bookmark_count,
-        "quiz_count": quiz_count,
-        "avg_score": avg_score,
+        "quiz_count": 0,
+        "avg_score": 0,
         "streak": streak
     }
 
-def get_article_by_link(link):
+def get_article_by_link(link, user_id=None):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM articles WHERE link = ?", (link,))
+    query = """
+        SELECT a.*,
+               CASE WHEN b.article_id IS NOT NULL THEN 1 ELSE 0 END as bookmarked,
+               CASE WHEN r.article_id IS NOT NULL THEN 1 ELSE 0 END as read_status
+        FROM articles a
+        LEFT JOIN user_bookmarks b ON a.id = b.article_id AND b.user_id = ?
+        LEFT JOIN user_read_status r ON a.id = r.article_id AND r.user_id = ?
+        WHERE a.link = ?
+    """
+    cursor.execute(query, (user_id or 0, user_id or 0, link))
     row = cursor.fetchone()
     if not row:
         conn.close()
@@ -517,6 +597,33 @@ def get_article_by_link(link):
             
     conn.close()
     return article
+
+def get_user_by_email(email):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email.strip().lower(),))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def create_user(email, hashed_password):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO users (email, hashed_password)
+            VALUES (?, ?)
+            """,
+            (email.strip().lower(), hashed_password)
+        )
+        user_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return user_id
+    except Exception as e:
+        conn.close()
+        raise e
 
 # Initialize on import to make sure db file is ready
 init_db()
