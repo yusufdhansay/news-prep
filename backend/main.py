@@ -30,6 +30,13 @@ app.add_middleware(
 )
 
 # Data models
+class ArticlePayload(BaseModel):
+    title: str
+    link: str
+    source: str
+    category: str
+    pub_date: str
+
 class KeyRequest(BaseModel):
     api_key: str
 
@@ -141,11 +148,27 @@ async def refresh_news(date: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
 
 @app.post("/api/news/{article_id}/analyze")
-async def analyze_news_item(article_id: int):
+async def analyze_news_item(article_id: int, payload: Optional[ArticlePayload] = None):
     """
     Runs HTML scraping and Groq analysis on a specific news item.
     """
     article = database.get_article(article_id)
+    
+    # Fallback to payload search/ingestion if not found in local DB by ID (stateless container workaround)
+    if not article and payload:
+        article = database.get_article_by_link(payload.link)
+        if not article:
+            database.save_articles([{
+                "title": payload.title,
+                "link": payload.link,
+                "source": payload.source,
+                "category": payload.category,
+                "pub_date": payload.pub_date
+            }])
+            article = database.get_article_by_link(payload.link)
+        if article:
+            article_id = article["id"]
+
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
         

@@ -141,7 +141,18 @@ export default function App() {
     }
     
     try {
-      const res = await fetch(`/api/news/${articleId}/analyze`, { method: 'POST' });
+      const body = art ? JSON.stringify({
+        title: art.title,
+        link: art.link,
+        source: art.source,
+        category: art.category,
+        pub_date: art.pub_date
+      }) : null;
+      const res = await fetch(`/api/news/${articleId}/analyze`, { 
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body
+      });
       if (res.ok) {
         const analyzed = await res.json();
         setSelectedArticle(analyzed);
@@ -310,7 +321,18 @@ export default function App() {
     if (!article.summary || !article.financial_implications || !article.pi_questions) {
       setIsAnalyzing(true);
       try {
-        const res = await fetch(`/api/news/${article.id}/analyze`, { method: 'POST' });
+        const body = JSON.stringify({
+          title: article.title,
+          link: article.link,
+          source: article.source,
+          category: article.category,
+          pub_date: article.pub_date
+        });
+        const res = await fetch(`/api/news/${article.id}/analyze`, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body
+        });
         if (res.ok) {
           const analyzed = await res.json();
           setSelectedArticle(analyzed);

@@ -344,5 +344,29 @@ def get_stats():
         "streak": streak
     }
 
+def get_article_by_link(link):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM articles WHERE link = ?", (link,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+        
+    article = dict(row)
+    if article["financial_implications"]:
+        try:
+            article["financial_implications"] = json.loads(article["financial_implications"])
+        except Exception:
+            pass
+    if article["pi_questions"]:
+        try:
+            article["pi_questions"] = json.loads(article["pi_questions"])
+        except Exception:
+            pass
+            
+    conn.close()
+    return article
+
 # Initialize on import to make sure db file is ready
 init_db()

@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/*.py": {
+      "includeFiles": "backend/mfin_news.db"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/:path*",
