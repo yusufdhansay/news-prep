@@ -10,8 +10,22 @@ IS_POSTGRES = DB_URL is not None
 if IS_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    import urllib.parse
+    
     if DB_URL.startswith("postgres://"):
         DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
+        
+    # Sanitize database URI: filter out unrecognized custom query parameters (like ?supa=) to prevent psycopg2 ProgrammingError
+    try:
+        parsed = urllib.parse.urlparse(DB_URL)
+        query_params = urllib.parse.parse_qs(parsed.query)
+        allowed_params = {'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'options', 'application_name'}
+        filtered_query_params = {k: v for k, v in query_params.items() if k in allowed_params}
+        new_query = urllib.parse.urlencode(filtered_query_params, doseq=True)
+        parsed = parsed._replace(query=new_query)
+        DB_URL = urllib.parse.urlunparse(parsed)
+    except Exception as e:
+        print(f"Error sanitizing database URL: {e}")
 else:
     if os.environ.get("VERCEL") == "1":
         # Serverless environment: Copy bundled database to /tmp/ if not already present
