@@ -125,10 +125,51 @@ def scrape_full_text(google_news_url):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
     }
     try:
-        # Resolve the redirect to find the actual news URL
+        import json
+        from bs4 import BeautifulSoup
+
+        original_url = None
         print(f"Resolving Google News URL: {google_news_url[:100]}...")
-        redirect_res = requests.get(google_news_url, headers=headers, timeout=8, allow_redirects=True)
-        original_url = redirect_res.url
+
+        # 1. Try to decode Google News URL via batchExecute RPC
+        try:
+            resp = requests.get(google_news_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                element = soup.select_one('c-wiz[data-p]')
+                if element:
+                    data_p = element.get('data-p')
+                    obj = json.loads(data_p.replace('%.@.', '["garturlreq",'))
+                    payload = {
+                        'f.req': json.dumps([[['Fbv4je', json.dumps(obj[:-6] + obj[-2:]), 'null', 'generic']]])
+                    }
+                    post_headers = {
+                        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                        'user-agent': headers['User-Agent']
+                    }
+                    response = requests.post(
+                        "https://news.google.com/_/DotsSplashUi/data/batchexecute", 
+                        headers=post_headers, 
+                        data=payload,
+                        timeout=8
+                    )
+                    if response.status_code == 200:
+                        array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
+                        original_url = json.loads(array_string)[1]
+        except Exception as e:
+            print(f"Error decoding Google News URL via RPC: {e}")
+
+        # 2. Fallback to standard request redirect URL tracking
+        if not original_url:
+            try:
+                redirect_res = requests.get(google_news_url, headers=headers, timeout=8, allow_redirects=True)
+                original_url = redirect_res.url
+            except Exception as e:
+                print(f"Fallback redirect URL resolution failed: {e}")
+
+        if not original_url:
+            return "Could not resolve original publisher URL. Please click 'Read Source' to visit the site."
+
         print(f"Original Article URL resolved: {original_url}")
         
         # Now fetch the original article content
