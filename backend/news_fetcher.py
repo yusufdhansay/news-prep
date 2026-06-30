@@ -126,14 +126,18 @@ def scrape_full_text(google_news_url):
     }
     try:
         import json
+        import urllib3
         from bs4 import BeautifulSoup
+        
+        # Suppress insecure request warnings from verify=False requests
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         original_url = None
         print(f"Resolving Google News URL: {google_news_url[:100]}...")
 
         # 1. Try to decode Google News URL via batchExecute RPC
         try:
-            resp = requests.get(google_news_url, headers=headers, timeout=8)
+            resp = requests.get(google_news_url, headers=headers, timeout=8, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 element = soup.select_one('c-wiz[data-p]')
@@ -151,7 +155,8 @@ def scrape_full_text(google_news_url):
                         "https://news.google.com/_/DotsSplashUi/data/batchexecute", 
                         headers=post_headers, 
                         data=payload,
-                        timeout=8
+                        timeout=8,
+                        verify=False
                     )
                     if response.status_code == 200:
                         array_string = json.loads(response.text.replace(")]}'", ""))[0][2]
@@ -162,7 +167,7 @@ def scrape_full_text(google_news_url):
         # 2. Fallback to standard request redirect URL tracking
         if not original_url:
             try:
-                redirect_res = requests.get(google_news_url, headers=headers, timeout=8, allow_redirects=True)
+                redirect_res = requests.get(google_news_url, headers=headers, timeout=8, allow_redirects=True, verify=False)
                 original_url = redirect_res.url
             except Exception as e:
                 print(f"Fallback redirect URL resolution failed: {e}")
@@ -172,12 +177,11 @@ def scrape_full_text(google_news_url):
 
         print(f"Original Article URL resolved: {original_url}")
         
-        # Now fetch the original article content
-        res = requests.get(original_url, headers=headers, timeout=8)
+        # Now fetch the original article content (disabling SSL verification in case the cert chain is incomplete)
+        res = requests.get(original_url, headers=headers, timeout=8, verify=False)
         if res.status_code != 200:
             return f"Failed to fetch content from the original publisher (Status Code: {res.status_code}). Please click 'Read Source' to visit the site."
             
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(res.content, 'html.parser')
         
         # Remove noisy tags
@@ -212,4 +216,4 @@ def scrape_full_text(google_news_url):
         return "\n\n".join(body_paragraphs)
     except Exception as e:
         print(f"Error scraping original article: {str(e)}")
-        return "Could not retrieve full article text due to a scraping error. Please click 'Read Source' to read the story."
+        return f"Could not retrieve full article text due to a scraping error ({type(e).__name__}: {str(e)}). Please click 'Read Source' to read the story."
