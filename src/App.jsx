@@ -102,10 +102,12 @@ export default function App() {
   const [apiKeySaved, setApiKeySaved] = useState(false);
 
   // Authentication states
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [token, setToken] = useState(() => {
+    return localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+  });
   const [user, setUser] = useState(() => {
     try {
-      const stored = localStorage.getItem('user');
+      const stored = localStorage.getItem('user') || sessionStorage.getItem('user');
       return stored ? JSON.parse(stored) : null;
     } catch {
       return null;
@@ -116,10 +118,20 @@ export default function App() {
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
   const [authError, setAuthError] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [keepMeSignedIn, setKeepMeSignedIn] = useState(false);
 
-  const saveSession = (newToken, newUser) => {
-    localStorage.setItem('token', newToken);
-    localStorage.setItem('user', JSON.stringify(newUser));
+  const saveSession = (newToken, newUser, persist = false) => {
+    if (persist) {
+      localStorage.setItem('token', newToken);
+      localStorage.setItem('user', JSON.stringify(newUser));
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
+    } else {
+      sessionStorage.setItem('token', newToken);
+      sessionStorage.setItem('user', JSON.stringify(newUser));
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
     setToken(newToken);
     setUser(newUser);
   };
@@ -127,6 +139,8 @@ export default function App() {
   const clearSession = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('user');
     setToken('');
     setUser(null);
   };
@@ -165,7 +179,7 @@ export default function App() {
       
       const data = await res.json();
       if (res.ok) {
-        saveSession(data.token, data.user);
+        saveSession(data.token, data.user, authMode === 'login' ? keepMeSignedIn : false);
         setAuthEmail('');
         setAuthPassword('');
       } else {
@@ -644,6 +658,21 @@ export default function App() {
                 required
               />
             </div>
+
+            {authMode === 'login' && (
+              <div className="auth-field-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', userSelect: 'none' }}>
+                <input 
+                  type="checkbox" 
+                  id="keep-me-signed-in"
+                  checked={keepMeSignedIn} 
+                  onChange={e => setKeepMeSignedIn(e.target.checked)} 
+                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                />
+                <label htmlFor="keep-me-signed-in" style={{ cursor: 'pointer', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  Keep me signed in
+                </label>
+              </div>
+            )}
 
             {authError && (
               <div className="auth-error-msg">

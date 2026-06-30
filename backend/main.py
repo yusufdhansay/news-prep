@@ -517,6 +517,173 @@ async def get_stats_endpoint(user_id: int = Depends(get_current_user_id)):
     """
     return database.get_stats(user_id=user_id)
 
+class BackfillPayload(BaseModel):
+    start_date: str
+    end_date: str
+    secret: str
+
+@app.post("/api/admin/backfill")
+async def admin_backfill(payload: BackfillPayload):
+    # Verify secret
+    if payload.secret != "mfin_backfill_2026_june":
+        raise HTTPException(status_code=403, detail="Unauthorized")
+        
+    try:
+        start_dt = datetime.strptime(payload.start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(payload.end_date, "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="start_date must be before or equal to end_date.")
+        
+    MHRD_SUB_QUERIES = [
+        "labor laws reforms code India",
+        "trade unions employee dispute India",
+        "corporate hiring trends India attrition",
+        "human resource management remote hybrid work",
+        "employee benefits EPFO pension India",
+        "diversity inclusion corporate workplace India",
+        "gig economy platform workers welfare",
+        "skill development corporate training India",
+        "workforce productivity employee engagement",
+        "talent management executive compensation India"
+    ]
+
+    AFFAIRS_SUB_QUERIES = [
+        "India government schemes policy",
+        "Supreme Court India ruling judgment",
+        "India cabinet decisions bilateral trade",
+        "elections India political reforms",
+        "infrastructure projects highway railway India",
+        "digital India UPI digital currency policy",
+        "foreign relations India US China Europe",
+        "state policy reforms agriculture land",
+        "defense procurement manufacturing India",
+        "education policy healthcare reform India"
+    ]
+    
+    import requests
+    import xml.etree.ElementTree as ET
+    import urllib.parse
+    import email.utils
+    import time
+    
+    def parse_rss_date(date_str):
+        try:
+            parsed = email.utils.parsedate_to_datetime(date_str)
+            return parsed.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def fetch_day_category(category, query, dt):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        date_str = dt.strftime("%Y-%m-%d")
+        after_date = (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+        before_date = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        time_filter = f"after:{after_date} before:{before_date}"
+        
+        # Sources filter from news_fetcher
+        sources_filter = "(site:moneycontrol.com OR site:economictimes.indiatimes.com OR site:livemint.com OR site:dailyhunt.in OR site:business-standard.com OR site:reuters.com)"
+        full_query = f"({query}) {sources_filter} {time_filter}"
+        
+        encoded = urllib.parse.quote_plus(full_query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        try:
+            resp = requests.get(url, headers=headers, timeout=12)
+            if resp.status_code != 200:
+                return []
+                
+            root = ET.fromstring(resp.content)
+            channel = root.find("channel")
+            if channel is None:
+                return []
+                
+            items = channel.findall("item")
+            articles = []
+            
+            # Fetch 12 articles to cover at least 10
+            for item in items[:12]:
+                title = item.findtext("title", "")
+                link = item.findtext("link", "")
+                pub_date_raw = item.findtext("pubDate", "")
+                
+                source_elem = item.find("source")
+                source = source_elem.text if source_elem is not None else "Google News"
+                
+                clean_title = title
+                if " - " in title:
+                    parts = title.rsplit(" - ", 1)
+                    clean_title = parts[0]
+                    if source == "Google News":
+                        source = parts[1]
+                        
+                parsed_pub_date = parse_rss_date(pub_date_raw)
+                try:
+                    time_part = parsed_pub_date.split(" ")[1]
+                    stamped_date = f"{date_str} {time_part}"
+                except Exception:
+                    stamped_date = f"{date_str} 12:00:00"
+                    
+                articles.append({
+                    "title": clean_title,
+                    "link": link,
+                    "source": source,
+                    "pub_date": stamped_date,
+                    "category": category
+                })
+            return articles
+        except Exception:
+            return []
+            
+    current = start_dt
+    total_saved = 0
+    day_details = []
+    
+    while current <= end_dt:
+        date_str = current.strftime("%Y-%m-%d")
+        day_num = current.day
+        
+        # Select rotating queries
+        mhrd_q = MHRD_SUB_QUERIES[day_num % len(MHRD_SUB_QUERIES)]
+        affairs_q = AFFAIRS_SUB_QUERIES[day_num % len(AFFAIRS_SUB_QUERIES)]
+        
+        day_articles = []
+        
+        # 1. Fetch Current Affairs
+        arts_affairs = fetch_day_category("Current Affairs", affairs_q, current)
+        day_articles.extend(arts_affairs)
+        time.sleep(0.5)
+        
+        # 2. Fetch MHRD
+        arts_mhrd = fetch_day_category("MHRD", mhrd_q, current)
+        day_articles.extend(arts_mhrd)
+        time.sleep(0.5)
+        
+        saved = 0
+        if day_articles:
+            saved = database.save_articles(day_articles)
+            total_saved += saved
+            
+        day_details.append({
+            "date": date_str,
+            "fetched": len(day_articles),
+            "saved": saved
+        })
+        
+        current += timedelta(days=1)
+        time.sleep(1)
+        
+    return {
+        "success": True,
+        "total_saved": total_saved,
+        "details": day_details
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
