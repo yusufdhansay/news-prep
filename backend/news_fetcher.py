@@ -11,7 +11,9 @@ CATEGORY_QUERIES = {
     "Finance & Banking": f"(RBI OR banking sector OR monetary policy OR inflation OR public sector banks) {SOURCES_FILTER} when:7d",
     "Markets": f"(Nifty OR Sensex OR stock market OR stock market earnings OR commodity markets OR bond yields) {SOURCES_FILTER} when:7d",
     "Geopolitics": f"(geopolitics OR international trade OR global trade OR US Federal Reserve OR OPEC OR foreign policy India) {SOURCES_FILTER} when:7d",
-    "Corporate & Economy": f"(India GDP OR startup funding OR mergers acquisitions OR fiscal deficit OR Union budget) {SOURCES_FILTER} when:7d"
+    "Corporate & Economy": f"(India GDP OR startup funding OR mergers acquisitions OR fiscal deficit OR Union budget) {SOURCES_FILTER} when:7d",
+    "Current Affairs": f"(current affairs OR national news India OR policy reforms OR government schemes OR Supreme Court India OR elections India) {SOURCES_FILTER} when:7d",
+    "MHRD": f"(labor laws India OR labor reforms OR trade unions OR human resource management OR employee relations OR gig economy OR talent management OR skill development OR EPFO) {SOURCES_FILTER} when:7d"
 }
 
 def parse_rss_date(date_str):

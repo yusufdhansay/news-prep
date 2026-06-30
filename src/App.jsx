@@ -992,7 +992,7 @@ export default function App() {
                 {/* Filters and Search */}
                 <div className="feed-controls">
                   <div className="category-tabs">
-                    {['all', 'Finance & Banking', 'Markets', 'Geopolitics', 'Corporate & Economy'].map(cat => (
+                    {['all', 'Finance & Banking', 'Markets', 'Geopolitics', 'Corporate & Economy', 'Current Affairs', 'MHRD'].map(cat => (
                       <button 
                         key={cat} 
                         className={`tab-chip ${selectedCategory === cat ? 'active' : ''}`}
