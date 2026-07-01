@@ -547,7 +547,27 @@ async def admin_backfill(payload: BackfillPayload):
         "gig economy platform workers welfare",
         "skill development corporate training India",
         "workforce productivity employee engagement",
-        "talent management executive compensation India"
+        "talent management executive compensation India",
+        "labor ministry employment data India",
+        "vocational training industrial training institute India",
+        "maternity benefits female labor participation India",
+        "minimum wage code salary structure India",
+        "industrial safety health welfare factory act India",
+        "employee stock options esop startup India",
+        "corporate layoffs retrenchment severance India",
+        "leadership development talent pipeline India",
+        "performance appraisal feedback system India",
+        "workplace harassment posh act compliance India",
+        "upskilling reskilling automation impact job India",
+        "industrial relations collective bargaining disputes India",
+        "organizational culture change management India",
+        "contract labor regulation abolition act India",
+        "employee wellness mental health corporate India",
+        "hiring salaries compensation review India",
+        "blue collar job market recruitment portal India",
+        "hr analytics database talent sourcing India",
+        "graduate employability placement trends India",
+        "apprentice training scheme apprenticeship act India"
     ]
 
     AFFAIRS_SUB_QUERIES = [
@@ -560,7 +580,27 @@ async def admin_backfill(payload: BackfillPayload):
         "foreign relations India US China Europe",
         "state policy reforms agriculture land",
         "defense procurement manufacturing India",
-        "education policy healthcare reform India"
+        "education policy healthcare reform India",
+        "parliament bill legislation India",
+        "monsoon agriculture crop sowing India",
+        "urban development smart cities India",
+        "space program ISRO space launch India",
+        "renewable energy solar wind policy India",
+        "aviation sector airport expansion India",
+        "tourism development policy visa India",
+        "science technology research funding India",
+        "water resources river clean ganga India",
+        "environmental policy forest conservation India",
+        "disaster management flood drought preparedness India",
+        "women empowerment safety schemes India",
+        "youth employment skill india mission",
+        "social welfare pension housing schemes India",
+        "national security border infrastructure India",
+        "g20 international forums summits India",
+        "telecom 5g roll out policy spectrum India",
+        "cooperative societies dairy farming india",
+        "sports infrastructure khelo india policy",
+        "judiciary reforms legal aid backlog India"
     ]
     
     import requests
@@ -606,8 +646,8 @@ async def admin_backfill(payload: BackfillPayload):
             items = channel.findall("item")
             articles = []
             
-            # Fetch 12 articles to cover at least 10
-            for item in items[:12]:
+            # Fetch 40 articles to cover at least 10 unique ones
+            for item in items[:40]:
                 title = item.findtext("title", "")
                 link = item.findtext("link", "")
                 pub_date_raw = item.findtext("pubDate", "")
@@ -649,8 +689,8 @@ async def admin_backfill(payload: BackfillPayload):
         day_num = current.day
         
         # Select rotating queries
-        mhrd_q = MHRD_SUB_QUERIES[day_num % len(MHRD_SUB_QUERIES)]
-        affairs_q = AFFAIRS_SUB_QUERIES[day_num % len(AFFAIRS_SUB_QUERIES)]
+        mhrd_q = MHRD_SUB_QUERIES[(day_num - 1) % len(MHRD_SUB_QUERIES)]
+        affairs_q = AFFAIRS_SUB_QUERIES[(day_num - 1) % len(AFFAIRS_SUB_QUERIES)]
         
         day_articles = []
         
@@ -687,3 +727,6 @@ async def admin_backfill(payload: BackfillPayload):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+

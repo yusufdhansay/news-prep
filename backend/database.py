@@ -108,18 +108,21 @@ class DynamicCursor:
             elif "date('now')" in query:
                 query = query.replace("date('now')", "CURRENT_DATE")
 
-            # 5. Handle lastrowid emulation
+            # 5. Handle lastrowid emulation (only for tables with an id primary key column)
             is_insert = query.strip().upper().startswith('INSERT')
             if is_insert and 'RETURNING' not in query.upper():
-                query += ' RETURNING id'
-                self.cursor.execute(query, params)
-                try:
-                    row = self.cursor.fetchone()
-                    if row:
-                        self._lastrowid = row[0]
-                except Exception:
-                    pass
-                return
+                upper_q = query.upper()
+                has_id_table = any(t in upper_q for t in [' INTO ARTICLES', ' INTO USERS', ' INTO QUIZ_SESSIONS'])
+                if has_id_table:
+                    query += ' RETURNING id'
+                    self.cursor.execute(query, params)
+                    try:
+                        row = self.cursor.fetchone()
+                        if row:
+                            self._lastrowid = row[0]
+                    except Exception:
+                        pass
+                    return
             
         self.cursor.execute(query, params)
 
