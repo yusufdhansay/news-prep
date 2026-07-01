@@ -724,9 +724,55 @@ async def admin_backfill(payload: BackfillPayload):
         "details": day_details
     }
 
+@app.post("/api/admin/clean-database")
+async def clean_database(payload: dict):
+    if payload.get("secret") != "mfin_backfill_2026_june":
+        raise HTTPException(status_code=403, detail="Unauthorized")
+        
+    try:
+        conn = database.get_db_connection()
+        cur = conn.cursor()
+        
+        # 1. Fetch all articles
+        cur.execute("SELECT id, title, link FROM articles;")
+        rows = cur.fetchall()
+        
+        invalid_ids = []
+        for row in rows:
+            art_id = row[0]
+            title = row[1]
+            link = row[2]
+            if not news_fetcher.is_valid_article(title, link):
+                invalid_ids.append(art_id)
+                
+        deleted_count = 0
+        if invalid_ids:
+            chunk_size = 100
+            for i in range(0, len(invalid_ids), chunk_size):
+                chunk = invalid_ids[i:i+chunk_size]
+                placeholders = ",".join(["%s" if database.IS_POSTGRES else "?" for _ in chunk])
+                query = f"DELETE FROM articles WHERE id IN ({placeholders});"
+                cur.execute(query, chunk)
+                conn.commit()
+                deleted_count += len(chunk)
+                
+        cur.close()
+        conn.close()
+        return {
+            "success": True,
+            "total_articles_scanned": len(rows),
+            "invalid_articles_found": len(invalid_ids),
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+
 
 
 

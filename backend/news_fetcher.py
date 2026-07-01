@@ -8,13 +8,57 @@ from datetime import datetime
 SOURCES_FILTER = "(site:moneycontrol.com OR site:economictimes.indiatimes.com OR site:livemint.com OR site:dailyhunt.in OR site:business-standard.com OR site:reuters.com)"
 
 CATEGORY_QUERIES = {
-    "Finance & Banking": f"(RBI OR banking sector OR monetary policy OR inflation OR public sector banks) {SOURCES_FILTER} when:7d",
-    "Markets": f"(Nifty OR Sensex OR stock market OR stock market earnings OR commodity markets OR bond yields) {SOURCES_FILTER} when:7d",
-    "Geopolitics": f"(geopolitics OR international trade OR global trade OR US Federal Reserve OR OPEC OR foreign policy India) {SOURCES_FILTER} when:7d",
-    "Corporate & Economy": f"(India GDP OR startup funding OR mergers acquisitions OR fiscal deficit OR Union budget) {SOURCES_FILTER} when:7d",
-    "Current Affairs": f"(current affairs OR national news India OR policy reforms OR government schemes OR Supreme Court India OR elections India) {SOURCES_FILTER} when:7d",
-    "MHRD": f"(labor laws India OR labor reforms OR trade unions OR human resource management OR employee relations OR gig economy OR talent management OR skill development OR EPFO) {SOURCES_FILTER} when:7d"
+    "Finance & Banking": f"(RBI OR \"monetary policy\" OR inflation OR \"banking sector\" OR \"bad loans\" OR \"interest rates\" OR \"repo rate\" OR NBFC OR fintech OR \"digital lending\" OR \"public sector banks\" OR \"regulatory action\" OR \"deposit growth\") {SOURCES_FILTER} when:7d",
+    "Markets": f"(Nifty OR Sensex OR \"stock market\" OR \"mutual funds\" OR \"IPO listings\" OR \"FII DII\" OR \"corporate earnings\" OR \"quarterly results\" OR \"net profit\" OR \"bond yields\" OR \"commodity prices\") {SOURCES_FILTER} when:7d",
+    "Geopolitics": f"(geopolitics OR \"global trade\" OR \"international trade\" OR \"import export\" OR tariffs OR \"foreign policy India\" OR \"bilateral relations\" OR \"Fed rate cuts\" OR OPEC OR \"crude oil prices\") {SOURCES_FILTER} when:7d",
+    "Corporate & Economy": f"(\"India GDP\" OR \"fiscal deficit\" OR \"Union budget\" OR \"startup funding\" OR \"PE funding\" OR \"private equity\" OR \"venture capital\" OR \"acquisition\" OR \"merger\" OR \"M&A deal\" OR \"stake sale\" OR \"buyout\" OR \"takeover\" OR \"board approval\" OR \"CCI approval\" OR \"joint venture\") {SOURCES_FILTER} when:7d",
+    "Current Affairs": f"(\"national policy India\" OR \"government schemes\" OR \"Supreme Court India\" OR \"policy reforms\" OR \"cabinet approval\" OR \"bill parliament\" OR \"elections India\" OR \"infrastructure projects\" OR \"digital India\" OR \"national news India\") {SOURCES_FILTER} when:7d",
+    "MHRD": f"(\"labor laws India\" OR \"labor reforms\" OR \"employment trends\" OR \"hiring indices\" OR \"layoffs\" OR \"attrition\" OR \"corporate salary\" OR \"gig workers\" OR \"EPFO directives\" OR \"union disputes\" OR \"talent management\" OR \"upskilling\") {SOURCES_FILTER} when:7d"
 }
+
+def is_valid_article(title, link):
+    """
+    Filters out boilerplate landing pages, forum discussions, photo galleries,
+    static image links, and low-quality/empty items.
+    """
+    t = title.lower().strip()
+    l = link.lower().strip()
+    
+    # 1. Boilerplate or forum link keywords
+    exclude_link_patterns = [
+        '/forum/', '/discussion/', '/boards/', 'forum.moneycontrol.com',
+        '/chat/', '/image/', '/photo/', '/video/', '/audio/', '/gallery/',
+        '/slideshow/', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4',
+        '/tag/', '/topic/', '/category/', '/author/', '/index/'
+    ]
+    if any(pat in l for pat in exclude_link_patterns):
+        return False
+        
+    # 2. Boilerplate title keywords (forum headers, landing page boilerplate)
+    exclude_title_keywords = [
+        'forum discussion', 'market view', 'personal finance & more',
+        'economic news, indian stock market news', 'business news, economic news',
+        'stock message board', 'latest news, breaking news', 'live market updates',
+        'stock market live', 'daily briefing', 'morning briefing', 'newsletter'
+    ]
+    if any(kw in t for kw in exclude_title_keywords):
+        return False
+        
+    # 3. Exclude base domain pages or short category indexes (must have deep slugs)
+    try:
+        from urllib.parse import urlparse
+        parsed_url = urlparse(link)
+        path = parsed_url.path.strip('/')
+        if not path or len(path.split('/')) < 2:
+            return False
+    except Exception:
+        pass
+        
+    # 4. Exclude titles that are too short to be descriptive
+    if len(t) < 15:
+        return False
+        
+    return True
 
 def parse_rss_date(date_str):
     try:
@@ -84,6 +128,10 @@ def fetch_category_news(category, date_str=None):
                 clean_title = parts[0]
                 if source == "Google News":
                     source = parts[1]
+                    
+            # Skip invalid, boilerplate, image or forum posts
+            if not is_valid_article(clean_title, link):
+                continue
                     
             parsed_pub_date = parse_rss_date(pub_date_raw)
             if date_str:
